@@ -35,31 +35,34 @@ Let's experiment with how installing something into a container at runtime behav
 ***Note:** Modifying the contents of a container at runtime is not something you would normally do. We are doing it here for instructional purposes only!*
 
 
-```bash
+```powershell
 # Create a container from the ubuntu image
+# the interactive and tty flag gives us a running shell within the container
+# the rm flag will delete the container on exit
 docker run --interactive --tty --rm ubuntu:22.04
 
-# Try to ping google.com
-ping google.com -c 1 # This results in `bash: ping: command not found`
+# Try to ping google.com once
+ping google.com -c 1 # This results in `powershell: ping: command not found`
 
 # Install ping
 apt update
 apt install iputils-ping --yes
 
 ping google.com -c 1 # This time it succeeds!
-exit
+exit # container is deleted (see deocker desktop)
 ```
 
 Let's try that again:
-```bash
-docker run -it --rm ubuntu:22.04
+```powershell
+# the --it is a combination of the interactive and tty flags
+docker run -it --rm ubuntu:22.04 # starts a container from the same image as before, but it is a new container, our installs are of course gone
 ping google.com -c 1 # It fails! 🤔
 ```
 
 It fails the second time because we installed it into that read/write layer specific to the first container, and when we tried again it was a **separate** container with a **separate** read/write layer!
 
 We can give the container a name so that we can tell docker to reuse it:
-```bash
+```powershell
 # Create a container from the ubuntu image (with a name and WITHOUT the --rm flag)
 docker run -it --name my-ubuntu-container ubuntu:22.04
 
@@ -70,26 +73,29 @@ ping google.com -c 1
 exit
 
 # List all containers
-docker container ps -a | grep my-ubuntu-container
+docker container ps -a | findstr my-ubuntu-container
 docker container inspect my-ubuntu-container
 
 # Restart the container and attach to running shell
 docker start my-ubuntu-container
-docker attach my-ubuntu-container
+docker attach my-ubuntu-container # this again starts the interactive shell in the container
 
 # Test ping
 ping google.com -c 1 # It should now succeed! 🎉
 exit
 ```
 
-We generally never want to rely on a container to persist the data, so for a dependency like this, we would want to include it in the image:
+We generally never want to rely on a container to persist the data and we also don't want to modify it on the fly, 
+so for a dependency like this, we would want to include it in the image:
 
-```bash
-# Build a container image with ubuntu image as base and ping installed
-docker build --tag my-ubuntu-image -<<EOF
+```powershell
+# 0. Dockerfile looks like this:
+
 FROM ubuntu:22.04
 RUN apt update && apt install iputils-ping --yes
-EOF
+
+# Build a container image with ubuntu image as base and ping installed
+docker build --t my-ubuntu-image -f 0.Dockerfile .
 
 # Run a container based on that image
 docker run -it --rm my-ubuntu-image
@@ -98,7 +104,7 @@ docker run -it --rm my-ubuntu-image
 ping google.com -c 1 # Success! 🥳
 ```
 
-The `FROM... RUN...` stuff is part of what is called a `Dockerfile` that is used to specify how to build a container image. We will go much deeper into building containers later in the course, but for now just understand that for anything we need in the container at runtime we should build it into the image! 
+The `Dockerfile` is used to specify how to build a container image. We will go much deeper into building containers later in the course, but for now just understand that for anything we need in the container at runtime we should build it into the image! 
 
 The one exception to this rule is environment specific configuration (environment variables, config files, etc...) which can be provided at runtime as a part of the environment (see: https://12factor.net/config).
 
@@ -114,7 +120,7 @@ Often, our applications produce data that we need to safely persist (e.g. databa
 
 Let's experiment with how creating some data within a container at runtime behaves!
 
-```bash
+```powershell
 # Create a container from the ubuntu image
 docker run -it --rm ubuntu:22.04
 
@@ -123,13 +129,14 @@ mkdir my-data
 echo "Hello from the container!" > /my-data/hello.txt
 
 # Confirm the file exists
+# The cat command is a standard Unix/Linux utility used to display the contents of a file
 cat my-data/hello.txt
 exit
 ```
 
 If we then create a new container, (as expected) the file does not exist!
 
-```bash
+```powershell
 # Create a container from the ubuntu image
 docker run -it --rm ubuntu:22.04
 
@@ -140,7 +147,7 @@ cat my-data/hello.txt # Produces error: `cat: my-data/hello.txt: No such file or
 #### i. Volume Mounts
 We can use volumes and mounts to safely persist the data.
 
-```bash
+```powershell
 # create a named volume
 docker volume create my-volume
 
@@ -155,22 +162,30 @@ cat my-data/hello.txt
 exit
 ```
 
-We can now create a new container and mount the existing volume to confirm the file persisted:
+On closing the container is removed, but we can now create a new container and mount the existing volume to confirm the file persisted:
 
-```bash
+```powershell
 # Create a new container and mount the volume into the container filesystem
 docker run  -it --rm --mount source=my-volume,destination=/my-data/ ubuntu:22.04
 cat my-data/hello.txt # This time it succeeds! 
 exit
 ```
 
-Where is this data located? On linux it would be at `/var/lib/docker/volumes`... but remember, on docker desktop, Docker runs a linux virtual machine.
+The data is persisted in teh volume, which is created seperate from the container.
+
+```powershell
+#this does the same
+docker run  -it --rm -v another-volume:/more-data/ ubuntu:22.04
+echo "Still saying hello!" > /more-data/still_hello.txt
+```
+
+Where is this data located? On linux it would be at `/var/lib/docker/volumes`... but remember, on docker desktop, Docker runs a linux virtual machine. So the path is that one, but we cannot directly access it from our host system.
 
 One way we can view the filesystem of that VM is to use a [container image](https://hub.docker.com/r/justincormack/nsenter1) created by `justincormat` that allows us to create a container within the namespace of PID 1. This effectively gives us a container with root access in that VM. 
 
 ***NOTE:** Generally you should be careful running containers in privileged mode with access to the host system in this way. Only do it if you have a specific reason to do so and you trust the container image.*
 
-```bash
+```powershell
 # Create a container that can access the Docker Linux VM
 # Pinning to the image hash ensures it is this SPECIFIC image and not an updated one helps minimize the potential of a supply chain attack
 docker run -it --rm --privileged --pid=host justincormack/nsenter1@sha256:5af0be5e42ebd55eea2c593e4622f810065c3f45bb805eaacf43f08f3d06ffd8
@@ -181,8 +196,8 @@ cat /var/lib/docker/volumes/my-volume/_data/hello.txt # Woohoo! we found our dat
 ```
 
 This approach can then be used to mount a volume at the known path where a program persists its data:
-```bash
-# Create a container from the postgres container image and mount its known storage path into a volume named pgdata
+```powershell
+# Create a container from the postgres container image and mount its known storage path (var/lib/postgresql/data) into a volume named pgdata
 docker run -it --rm -v pgdata:/var/lib/postgresql/data -e POSTGRES_PASSWORD=foobarbaz postgres:15.1-alpine
 ```
 
@@ -190,20 +205,27 @@ docker run -it --rm -v pgdata:/var/lib/postgresql/data -e POSTGRES_PASSWORD=foob
 
 Alternatively, we can mount a directory from the host system using a bind mount:
 
-```bash
-# Create a container that mounts a directory from the host filesystem into the container
-docker run  -it --rm --mount type=bind,source="${PWD}"/my-data,destination=/my-data ubuntu:22.04
+```powershell
+# Create a container that mounts a directory from the host filesystem into the container {PWD] is present working directory}
+mkdir ./mount
+
+docker run  -it --rm --mount type=bind,source="${PWD}"/mount,destination=/my-data ubuntu:22.04
 # Again, there is a similar (but shorter) syntax using -v which accomplishes the same
 docker run  -it --rm -v ${PWD}/my-data:/my-data ubuntu:22.04
 
-echo "Hello from the container!" > /my-data/hello.txt
+echo "Hello again!" > /my-data/hello_again.txt
 
-# You should also be able to see the hello.txt file on your host system
 cat my-data/hello.txt
 exit
 ```
+You should also be able to see the hello.txt file on your host system
+```powershell
+cat /mount/hello_again.txt
+```
 
 Bind mounts can be nice if you want easy visibility into the data being stored, but there are a number of reasons outlined at https://docs.docker.com/storage/volumes/ (including speed if you are running Docker Desktop on windows/mac) for why volumes are preferred. 
+
+Basically bind mounts are a way to preserve data on the host, while volume mounts persist within the docker virtual machine.
 
 ## II. Use Cases
 
@@ -228,25 +250,27 @@ Here are a some useful databases container images and sample commands that attem
 
 #### Postgres 
 https://hub.docker.com/_/postgres
-```bash
+```powershell
 docker run -d --rm \
+  #this volume mount persists teh postgres data, you have to know, that it lives at /var/lib/postgresql/data in the container
   -v pgdata:/var/lib/postgresql/data \
   -e POSTGRES_PASSWORD=foobarbaz \
   -p 5432:5432 \
   postgres:15.1-alpine
 
-# With custom postresql.conf file
+# With custom postresql.conf file, which is {PWD}/postgres.conf on host
 docker run -d --rm \
   -v pgdata:/var/lib/postgresql/data \
   -v ${PWD}/postgres.conf:/etc/postgresql/postgresql.conf \
   -e POSTGRES_PASSWORD=foobarbaz \
   -p 5432:5432 \
+  #this last line tells postgres where to look for the config
   postgres:15.1-alpine -c 'config_file=/etc/postgresql/postgresql.conf'
 ```
 
 #### Mongo
 https://hub.docker.com/_/mongo
-```bash
+```powershell
 docker run -d --rm \
   -v mongodata:/data/db \
   -e MONGO_INITDB_ROOT_USERNAME=root \
@@ -269,7 +293,7 @@ https://hub.docker.com/_/redis
 
 Depending how you are using redis within your application, you may or may not care if the data is persisted.
 
-```bash
+```powershell
 docker run -d --rm \
   -v redisdata:/data \
   redis:7.0.8-alpine
@@ -283,7 +307,7 @@ docker run -d --rm \
 
 #### MySQL
 https://hub.docker.com/_/mysql
-```bash
+```powershell
 docker run -d --rm \
   -v mysqldata:/var/lib/mysql \
   -e MYSQL_ROOT_PASSWORD=foobarbaz \
@@ -299,7 +323,7 @@ docker run -d --rm \
 
 #### Elasticsearch
 https://hub.docker.com/_/elasticsearch
-```bash
+```powershell
 docker run -d --rm \
   -v elasticsearchdata:/usr/share/elasticsearch/data
   -e ELASTIC_PASSWORD=foobarbaz \
@@ -312,7 +336,7 @@ docker run -d --rm \
 #### Neo4j
 https://hub.docker.com/_/neo4j
 
-```bash
+```powershell
 docker run -d --rm \
     -v=neo4jdata:/data \
     -e NEO4J_AUTH=neo4j/foobarbaz \
@@ -323,9 +347,11 @@ docker run -d --rm \
 
 ### B. Interactive Test Environments
 
+Test commands on an operating system or in a language (or version of that language) not installed on host!
+
 #### i. Operating systems
 
-```bash
+```powershell
 # https://hub.docker.com/_/ubuntu
 docker run -it --rm ubuntu:22.04
 
@@ -341,8 +367,9 @@ docker run -it --rm busybox:1.36.0 # small image with lots of useful utilities
 
 
 #### ii. Programming runtimes:
-```bash
+```powershell
 # https://hub.docker.com/_/python
+# bare bones - packages have to be installed via dockerfile on top of the base image
 docker run -it --rm python:3.11.1
 
 # https://hub.docker.com/_/node
@@ -362,28 +389,30 @@ Sometimes you don't have a particular utility installed on your current system, 
 **jq (json command line utility)**
 
 https://hub.docker.com/r/stedolan/jq
-```bash
+```powershell
+#the path to test.json is an input to the docker file, it is located here on the host
 docker run -i stedolan/jq <sample-data/test.json '.key_1 + .key_2'
+#puts out "value1value2"
 ```
 
 **yq (yaml command line utility)**
 
 https://hub.docker.com/r/mikefarah/yq
-```bash
+```powershell
 docker run -i mikefarah/yq <sample-data/test.yaml '.key_1 + .key_2'
 ```
 
 **sed**
 
 GNU `sed` behaves differently from the default MacOS version for certain edge cases.
-```bash
+```powershell
 docker run -i --rm busybox:1.36.0 sed 's/file./file!/g' <sample-data/test.txt
 ```
 
 **base64**
 
 GNU `base64` behaves differently from the default MacOS version for certain edge cases.
-```bash
+```powershell
 # Pipe input from previous command
 echo "This string is just long enough to trigger a line break in GNU base64." | docker run -i --rm busybox:1.36.0 base64
 
@@ -394,14 +423,14 @@ docker run -i --rm busybox:1.36.0 base64 </sample-data/test.txt
 **Amazon Web Services CLI**
 
 https://hub.docker.com/r/amazon/aws-cli
-```bash
-# Bind mount the credentials into the container
-docker run --rm -v ~/.aws:/root/.aws amazon/aws-cli:2.9.18 s3 ls
+```powershell
+# Bind mount the credentials into the container. These credentials are usually located in C:\Users<username>.aws\credentials
+docker run --rm -v %UserProfile%/.aws:/root/.aws amazon/aws-cli:2.9.18 s3 ls
 ```
 
 **Google Cloud Platform CLI**
 
-```bash
+```powershell
 # Bind mount the credentials into the container
 docker run --rm -v ~/.config/gcloud:/root/.config/gcloud gcr.io/google.com/cloudsdktool/google-cloud-cli:415.0.0 gsutil ls
 # Why is the container image so big 😭?! 2.8GB
@@ -411,7 +440,7 @@ docker run --rm -v ~/.config/gcloud:/root/.config/gcloud gcr.io/google.com/cloud
 
 If you plan to use one of these utilities inside of a container frequently, it can be useful to use a shell function or alias to make the ergonomics feel like the program is installed on the host. Here are examples of this for `yq`:
 
-```bash
+```powershell
 # Shell function
 yq-shell-function() {
   docker run --rm -i -v ${PWD}:/workdir mikefarah/yq "$@"
